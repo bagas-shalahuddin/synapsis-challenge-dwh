@@ -1,0 +1,85 @@
+# Git ignore file for Coal Mining ETL Pipeline
+
+# Environment files
+.env
+.env.local
+.env.production
+
+# Docker volumes and data
+postgres_origin/
+clickhouse_data/
+metabase_data/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# ETL logs
+etl/logs/
+*.log
+
+# Machine learning models
+*.pkl
+*.joblib
+models/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pytest
+.pytest_cache/
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
+# Docker
+.docker/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Metabase specific
+metabase.db*
+metabase.jar
+
+# ClickHouse specific
+clickhouse_data/
+clickhouse_logs/
+
+# PostgreSQL specific
+postgres_data/
+
+# Backup files
+*.bak
+*.backup
