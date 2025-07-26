@@ -10,6 +10,8 @@ services:
       - CLICKHOUSE_PASSWORD=password
     volumes:
       - clickhouse_data:/var/lib/clickhouse
+      - ./clickhouse-config/config.d:/etc/clickhouse-server/config.d
+      - ./clickhouse-config/users.d:/etc/clickhouse-server/users.d
     networks: 
       - metanet1-clickhouse
     ports:

@@ -13,7 +13,7 @@ from typing import Dict, List, Tuple, Optional
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('/app/logs/coal_mining_etl.log'),
@@ -133,7 +133,7 @@ class CoalMiningETL:
             count = result.result_rows[0][0]
             
             if count == 0:
-                logger.info("Loading initial data from init.sql file...")
+                logger.info("Loading initial data from production_logs.sql file...")
                 
                 self._load_from_sql_file()
                 self._load_equipment_csv()
@@ -148,7 +148,7 @@ class CoalMiningETL:
 
     def _load_from_sql_file(self):
         try:
-            sql_file_path = '/app/init.sql'
+            sql_file_path = '/app/production_logs.sql'
             if os.path.exists(sql_file_path):
                 with open(sql_file_path, 'r') as f:
                     sql_content = f.read()
@@ -159,12 +159,12 @@ class CoalMiningETL:
                     if statement:
                         self.client.command(statement)
                 
-                logger.info(f"Executed {len(statements)} INSERT statements from init.sql")
+                logger.info(f"Executed {len(statements)} INSERT statements from production_logs.sql")
             else:
-                logger.warning(f"init.sql file not found at {sql_file_path}")
+                logger.warning(f"production_logs.sql file not found at {sql_file_path}")
                 
         except Exception as e:
-            logger.error(f"Failed to load data from init.sql: {e}")
+            logger.error(f"Failed to load data from production_logs.sql: {e}")
 
     def _load_equipment_csv(self):
         try:
@@ -222,54 +222,52 @@ class CoalMiningETL:
         }
 
     def get_weather_data(self, date_str: str) -> Dict:
-        try:
-            date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
-            today = datetime.now().date()
-            days_diff = (today - date_obj).days
-            
-            if days_diff >= 0 and days_diff <= 92:
-                url = "https://api.open-meteo.com/v1/forecast"
-                params = {
-                    'latitude': 2.0167,  
-                    'longitude': 117.3000,
-                    'daily': 'temperature_2m_mean,precipitation_sum',
-                    'timezone': 'Asia/Jakarta',
-                    'past_days': min(days_diff + 1, 92),
-                    'forecast_days': 0
-                }
-            else:
-                return self._generate_weather_pattern(date_str)
-                
-            response = requests.get(url, params=params, timeout=10)
-            response.raise_for_status()
-            data = response.json()
-            
-            if 'daily' in data and 'time' in data['daily']:
-                date_index = None
-                for i, time_str in enumerate(data['daily']['time']):
-                    if time_str == date_str:
-                        date_index = i
-                        break
-                
-                if date_index is not None:
-                    temp = data['daily']['temperature_2m_mean'][date_index] or 26.0
-                    precipitation = data['daily']['precipitation_sum'][date_index] or 0.0
-                else:
-                    temp = data['daily']['temperature_2m_mean'][0] or 26.0
-                    precipitation = data['daily']['precipitation_sum'][0] or 0.0
-                
-                weather_impact = 'Heavy Rain' if precipitation > 10 else 'Light Rain' if precipitation > 0 else 'Clear'
+        for attempt in range(5):  # Retry up to 5 times
+            try:
+                date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+                today = datetime.now().date()
+                days_diff = (today - date_obj).days
+
+                if days_diff >= 0 and days_diff <= 92:
+                    url = "https://api.open-meteo.com/v1/forecast"
+                    params = {
+                        'latitude': 2.0167,
+                        'longitude': 117.3000,
+                        'daily': 'temperature_2m_mean,precipitation_sum',
+                        'timezone': 'Asia/Jakarta',
+                        'past_days': min(days_diff + 1, 92),
+                        'forecast_days': 0
+                    }
                     
-                return {
-                    'date': date_str,
-                    'temperature_mean': temp,
-                    'precipitation_sum': precipitation,
-                    'weather_impact': weather_impact
-                }
+                    response = requests.get(url, params=params, timeout=15)
+                    response.raise_for_status()
+                    data = response.json()
+
+                    if 'daily' in data and 'time' in data['daily'] and date_str in data['daily']['time']:
+                        date_index = data['daily']['time'].index(date_str)
+                        temp = data['daily']['temperature_2m_mean'][date_index]
+                        precipitation = data['daily']['precipitation_sum'][date_index]
+                        
+                        weather_impact = 'Heavy Rain' if precipitation > 10 else 'Light Rain' if precipitation > 0 else 'Clear'
+                        
+                        return {
+                            'date': date_str,
+                            'temperature_mean': round(temp, 1),
+                            'precipitation_sum': round(precipitation, 1),
+                            'weather_impact': weather_impact
+                        }
                 
-        except Exception as e:
-            logger.warning(f"Weather API failed for {date_str}: {e}")
-            
+                # If date is not within API range or data not found, generate it
+                return self._generate_weather_pattern(date_str)
+
+            except (requests.exceptions.RequestException, ValueError) as e:
+                logger.warning(f"Weather API attempt {attempt + 1} failed for {date_str}: {e}")
+                if attempt < 4:
+                    time.sleep(2 ** attempt)  # Exponential backoff
+                else:
+                    logger.error(f"Weather API failed after multiple retries for {date_str}.")
+                    return self._generate_weather_pattern(date_str)
+        
         return self._generate_weather_pattern(date_str)
     
     def extract_production_logs(self, start_date: str, end_date: str) -> pd.DataFrame:
@@ -507,34 +505,59 @@ class CoalMiningETL:
                 equipment_result = self.client.query(equipment_query)
                 equipment_dict = {row[0]: {'utilization': row[1], 'fuel': row[2]} 
                                 for row in equipment_result.result_rows}
-            except:
+            except Exception as eq_error:
+                logger.warning(f"Equipment query failed: {eq_error}")
                 equipment_dict = {}
             
             final_data = []
             
             for i, (date, total_prod, avg_quality, shifts) in enumerate(production_data):
-                date_str = date.strftime('%Y-%m-%d')
-                
-                weather = self.get_weather_data(date_str)
-                equipment = equipment_dict.get(date, {'utilization': 85.0, 'fuel': 20.0})
-                
-                fuel_efficiency = equipment['fuel'] / total_prod * 1000 if total_prod > 0 else 2.5
-                
-                final_record = {
-                    'date': date,
-                    'total_production_daily': total_prod,
-                    'average_quality_grade': avg_quality,
-                    'equipment_utilization': equipment['utilization'],
-                    'fuel_efficiency': fuel_efficiency,
-                    'rainfall_mm': weather['precipitation_sum'],
-                    'weather_impact': weather['weather_impact']
-                }
-                
-                final_data.append(final_record)
-                
-                time.sleep(0.1)
-                if (i + 1) % 10 == 0:
-                    logger.info(f"Processed {i + 1}/{len(production_data)} days...")
+                try:
+                    date_str = date.strftime('%Y-%m-%d')
+                    
+                    # Debug logging for problematic values
+                    logger.debug(f"Processing day {i+1}: date={date}, total_prod={total_prod} (type: {type(total_prod)}), avg_quality={avg_quality} (type: {type(avg_quality)})")
+                    
+                    weather = self.get_weather_data(date_str)
+                    equipment = equipment_dict.get(date, {'utilization': 85.0, 'fuel': 20.0})
+                    
+                    # More robust None handling with explicit type conversion
+                    fuel = float(equipment.get('fuel', 0.0)) if equipment.get('fuel') is not None else 0.0
+                    utilization = float(equipment.get('utilization', 85.0)) if equipment.get('utilization') is not None else 85.0
+                    prod = float(total_prod) if total_prod is not None else 0.0
+                    quality = float(avg_quality) if avg_quality is not None else 0.0
+                    
+                    # Calculate fuel efficiency with extra safety
+                    try:
+                        if prod > 0 and fuel > 0:
+                            fuel_efficiency = (fuel / prod) * 1000
+                        else:
+                            fuel_efficiency = 2.5
+                    except (TypeError, ZeroDivisionError) as calc_error:
+                        logger.warning(f"Fuel efficiency calculation failed for {date_str}: {calc_error}, using default")
+                        fuel_efficiency = 2.5
+                    
+                    final_record = {
+                        'date': date,
+                        'total_production_daily': prod,
+                        'average_quality_grade': quality,
+                        'equipment_utilization': utilization,
+                        'fuel_efficiency': fuel_efficiency,
+                        'rainfall_mm': weather['precipitation_sum'],
+                        'weather_impact': weather['weather_impact']
+                    }
+                    
+                    final_data.append(final_record)
+                    
+                    time.sleep(0.1)
+                    if (i + 1) % 10 == 0:
+                        logger.info(f"Processed {i + 1}/{len(production_data)} days...")
+                        
+                except Exception as row_error:
+                    logger.error(f"Error processing row {i+1} (date: {date}): {row_error}")
+                    logger.error(f"Row data: date={date}, total_prod={total_prod}, avg_quality={avg_quality}, shifts={shifts}")
+                    # Continue processing other rows instead of failing completely
+                    continue
             
             self.client.insert(
                 'coal_mining.daily_production_metrics',
@@ -548,6 +571,8 @@ class CoalMiningETL:
             
         except Exception as e:
             logger.error(f"Failed to populate daily metrics: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             return False
 
 def main():

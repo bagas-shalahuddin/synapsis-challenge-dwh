@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY coal_mining_etl.py .
 COPY prediction_model.py .
 COPY run_etl.sh .
-COPY init.sql .
+COPY production_logs.sql .
 COPY equipment_sensors.csv .
 
 # Make startup script executable

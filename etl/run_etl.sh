@@ -84,18 +84,18 @@ ENGINE = MergeTree()
 ORDER BY date
 "
 
-# Load data from init.sql if available
-if [ -f "/app/init.sql" ]; then
-    echo "Loading data from init.sql..."
-    # Execute init.sql statements
-    cat /app/init.sql | while read -r line; do
+# Load data from production_logs.sql if available
+if [ -f "/app/production_logs.sql" ]; then
+    echo "Loading data from production_logs.sql..."
+    # Execute production_logs.sql statements
+    cat /app/production_logs.sql | while read -r line; do
         if [[ $line == INSERT* ]]; then
             execute_query "$line"
         fi
     done
-    echo "Data from init.sql loaded successfully!"
+    echo "Data from production_logs.sql loaded successfully!"
 else
-    echo "init.sql not found, loading basic mine data..."
+    echo "production_logs.sql not found, loading basic mine data..."
     execute_query "
     INSERT INTO coal_mining.mines VALUES 
     (1, 'MINE001', 'Bukit Bara', 'Berau, Kalimantan', 'Active'),
